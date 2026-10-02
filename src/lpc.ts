@@ -3,15 +3,16 @@ import { DEBUG } from './config';
 /**
  * Markwhen ビュー(@markwhen/view-client の useLpc)とのホスト側通信。
  *
- * 想定プロトコル(要検証):
- *   host/view → 相手: { request:  { jsonrpc: '2.0', method, params, id } }
- *   相手 → 要求元:    { response: { jsonrpc: '2.0', id, result } }
+ * 実機で観測した形式(ビュー → ホスト):
+ *   { type: 'markwhenState', request: true, id: 'markwhen_xxxx' }
+ *   { type: 'appState',      request: true, id: 'markwhen_xxxx' }
+ * つまりビューが「状態をください」とホストに要求してくる。
  *
- * ビュー側は useLpc({ markwhenState, appState }) で待ち受けており、
- * ホストが method 名 'markwhenState' / 'appState' のリクエストを送ると
- * 対応するコールバックが呼ばれる、という前提で実装している。
- * 実際のメッセージ形式が異なる場合は、このファイルだけを直せば済むようにしてある。
- * (DEBUG=true でビューから届くメッセージを確認できる)
+ * 返信の形式(ホスト → ビュー)は、要求の形からの推定:
+ *   { type, response: true, id: <要求と同じid>, params: <返す値> }
+ * ホストからの更新通知は、同じ形式の request を送る(ビューの listeners[type] が呼ばれる想定)。
+ *
+ * 形式が違った場合はこのファイルだけを直せばよい。DEBUG=true でやり取りがコンソールに出る。
  */
 export class LpcHost {
   private seq = 0;
@@ -19,7 +20,8 @@ export class LpcHost {
   constructor(
     private frame: HTMLIFrameElement,
     private origin: string,
-    private onViewRequest: (method: string, params: unknown) => unknown,
+    /** ビューからの要求 type ごとに、返す値を作る関数 */
+    private handlers: Record<string, () => unknown>,
   ) {}
 
   start(): void {
@@ -30,12 +32,15 @@ export class LpcHost {
     window.removeEventListener('message', this.handle);
   }
 
-  /** ビューへ状態などを送る(ビュー側の listeners[method] が呼ばれる想定) */
-  notify(method: string, params: unknown): void {
+  /** ホストからビューへ更新を通知する */
+  push(type: string, params: unknown): void {
+    this.post({ type, request: true, id: `markwhen_host_${++this.seq}`, params });
+  }
+
+  private post(message: Record<string, unknown>): void {
     const target = this.frame.contentWindow;
     if (target == null) return;
-
-    const message = { request: { jsonrpc: '2.0', method, params, id: `host-${++this.seq}` } };
+    if (DEBUG) console.log('[markwhen] to view:', message);
     try {
       target.postMessage(message, this.origin);
     }
@@ -52,14 +57,14 @@ export class LpcHost {
 
     const data = e.data;
     if (DEBUG) console.log('[markwhen] from view:', data);
+    if (data == null || typeof data.type !== 'string') return;
 
-    const req = data?.request;
-    if (req == null) return; // response など。今回は何もしない
-
-    const result = this.onViewRequest(req.method, req.params);
-    (e.source as Window).postMessage(
-      { response: { jsonrpc: '2.0', id: req.id, result: result ?? null } },
-      this.origin,
-    );
+    // ビューからの要求 → 返信
+    if (data.request === true) {
+      const handler = this.handlers[data.type];
+      const params = handler != null ? handler() : undefined;
+      this.post({ type: data.type, response: true, id: data.id, params });
+    }
+    // data.response === true は、こちらからのpushへの返信。何もしない
   };
 }

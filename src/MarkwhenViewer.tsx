@@ -13,23 +13,26 @@ const isDarkMode = (): boolean => (
 );
 
 // ビューに渡す状態を作る。
-// ※ MarkwhenState / AppState の形はバージョン依存。動作確認時に要調整。
+// ※ MarkwhenState の形はバージョン依存。表示が空なら DEBUG ログで要求内容を確認し調整する。
 const buildState = (text: string) => {
-  let parsed: any;
+  let timelines: any[] = [];
   let error: string | undefined;
   try {
-    parsed = parse(text);
+    const result: any = parse(text);
+    timelines = Array.isArray(result) ? result : (result?.timelines ?? [result]);
   }
   catch (e) {
     error = (e as Error).message;
   }
   const markwhenState = {
     rawText: text,
-    parsed,
-    transformed: parsed?.timelines?.[0]?.events,
+    parsed: timelines,
+    transformed: timelines[0]?.events,
   };
   return { markwhenState, error };
 };
+
+const buildAppState = () => ({ isDark: isDarkMode(), colorMap: {} });
 
 type Props = { text: string };
 type State = { error?: string };
@@ -41,20 +44,14 @@ export class MarkwhenViewer extends React.Component<Props, State> {
 
   private host: LpcHost | null = null;
 
-  private ready = false;
-
   componentDidMount(): void {
     const frame = this.frameRef.current;
     if (frame == null) return;
 
-    // ビューからの最初のリクエスト(=ビューの準備完了とみなす)で一度だけ状態を送る
-    this.host = new LpcHost(frame, viewOrigin, (method) => {
-      if (DEBUG) console.log('[markwhen] view request:', method);
-      if (!this.ready) {
-        this.ready = true;
-        setTimeout(this.pushState, 0);
-      }
-      return null;
+    // ビューからの要求(markwhenState / appState)に返信する
+    this.host = new LpcHost(frame, viewOrigin, {
+      markwhenState: () => this.currentState().markwhenState,
+      appState: () => buildAppState(),
     });
     this.host.start();
   }
@@ -71,16 +68,20 @@ export class MarkwhenViewer extends React.Component<Props, State> {
     this.host = null;
   }
 
+  private currentState() {
+    const { markwhenState, error } = buildState(this.props.text);
+    if (error !== this.state.error) {
+      setTimeout(() => this.setState({ error }), 0);
+    }
+    return { markwhenState };
+  }
+
+  // ページ内容が変わったとき、ビューへ更新を通知する
   private pushState = (): void => {
     const host = this.host;
     if (host == null) return;
-
-    const { markwhenState, error } = buildState(this.props.text);
-    if (error !== this.state.error) {
-      this.setState({ error });
-    }
-    host.notify('appState', { isDark: isDarkMode(), colorMap: {} });
-    host.notify('markwhenState', markwhenState);
+    host.push('appState', buildAppState());
+    host.push('markwhenState', this.currentState().markwhenState);
   };
 
   render(): JSX.Element {
@@ -95,7 +96,6 @@ export class MarkwhenViewer extends React.Component<Props, State> {
           src={VIEW_URL}
           title="markwhen timeline"
           sandbox="allow-scripts allow-same-origin"
-          onLoad={this.pushState}
           style={{
             width: '100%', height: VIEW_HEIGHT, border: '1px solid #ccc', borderRadius: 4,
           }}
