@@ -8,4 +8,4 @@ export const VIEW_URL = 'https://timeline.markwhen.com';
 export const VIEW_HEIGHT = 480;
 
 // true にすると、ビューとのpostMessageをコンソールに出力する(動作確認用。確認が済んだら false に戻す)
-export const DEBUG = true;
+export const DEBUG = false;

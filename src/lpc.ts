@@ -8,9 +8,9 @@ import { DEBUG } from './config';
  *   { type: 'appState',      request: true, id: 'markwhen_xxxx' }
  * つまりビューが「状態をください」とホストに要求してくる。
  *
- * 返信の形式(ホスト → ビュー)は、要求の形からの推定:
+ * 返信の形式(ホスト → ビュー。実機で動作確認済み):
  *   { type, response: true, id: <要求と同じid>, params: <返す値> }
- * ホストからの更新通知は、同じ形式の request を送る(ビューの listeners[type] が呼ばれる想定)。
+ * ホストからの更新通知は、同じ形式の request を送る(ビューの listeners[type] が呼ばれる)。
  *
  * ビュー側(view-client)の受信条件(実コードで確認済み):
  *   - メッセージの id が 'markwhen' で始まらないものは無視される
