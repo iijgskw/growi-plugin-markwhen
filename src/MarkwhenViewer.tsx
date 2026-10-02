@@ -12,30 +12,70 @@ const isDarkMode = (): boolean => (
   document.documentElement.getAttribute('data-bs-theme') === 'dark'
 );
 
-// ビューに渡す状態を作る。
-// ※ MarkwhenState の形はバージョン依存。表示が空なら DEBUG ログで要求内容を確認し調整する。
+/**
+ * ビューに渡す markwhenState の `parsed` の形(デバッグ用に切り替え可能)。
+ *   A: timelines の配列(既定)
+ *   B: parse() の戻り値そのまま(公式 Obsidian プラグインの方式と同じはず)
+ *   C: timelines[0] 単体
+ *   D: [parse() の戻り値]
+ * コンソールから __markwhenDebug.setShape('B') のように切り替えられる。
+ */
+type Shape = 'A' | 'B' | 'C' | 'D';
+const getShape = (): Shape => ((window as any).__MW_SHAPE as Shape) ?? 'B';
+
 const buildState = (text: string) => {
+  let result: any;
   let timelines: any[] = [];
   let error: string | undefined;
   try {
-    const result: any = parse(text);
+    result = parse(text);
     timelines = Array.isArray(result) ? result : (result?.timelines ?? [result]);
   }
   catch (e) {
     error = (e as Error).message;
   }
-  const markwhenState = {
-    rawText: text,
-    parsed: timelines,
-    transformed: timelines[0]?.events,
-  };
+  const first = timelines[0];
+
+  let parsed: any;
+  switch (getShape()) {
+    case 'A': parsed = timelines; break;
+    case 'C': parsed = first; break;
+    case 'D': parsed = [result]; break;
+    default: parsed = result; break; // B
+  }
+
+  const markwhenState = { rawText: text, parsed, transformed: first?.events };
+  if (DEBUG) {
+    console.log('[markwhen] parse result:', {
+      isArray: Array.isArray(result),
+      keys: result != null ? Object.keys(result) : null,
+      shape: getShape(),
+    });
+  }
   return { markwhenState, error };
 };
 
-const buildAppState = () => ({ isDark: isDarkMode(), colorMap: {} });
+// colorMap は { パス: { タグ: 'R, G, B' } } の形(公式 Obsidian プラグインの解説より)
+const buildAppState = () => ({ isDark: isDarkMode(), colorMap: { default: {} } });
 
 type Props = { text: string };
 type State = { error?: string };
+
+const instances = new Set<MarkwhenViewer>();
+
+// デバッグ用フック: コンソールから状態の形を切り替えて再送できる
+(window as any).__markwhenDebug = {
+  setShape: (s: Shape) => {
+    (window as any).__MW_SHAPE = s;
+    instances.forEach(i => i.refresh());
+    return `shape=${s}, viewers=${instances.size}`;
+  },
+  resend: () => {
+    instances.forEach(i => i.refresh());
+    return `viewers=${instances.size}`;
+  },
+  lastState: undefined as unknown,
+};
 
 export class MarkwhenViewer extends React.Component<Props, State> {
   state: State = {};
@@ -45,6 +85,7 @@ export class MarkwhenViewer extends React.Component<Props, State> {
   private host: LpcHost | null = null;
 
   componentDidMount(): void {
+    instances.add(this);
     const frame = this.frameRef.current;
     if (frame == null) return;
 
@@ -64,12 +105,18 @@ export class MarkwhenViewer extends React.Component<Props, State> {
   }
 
   componentWillUnmount(): void {
+    instances.delete(this);
     this.host?.stop();
     this.host = null;
   }
 
+  refresh(): void {
+    this.pushState();
+  }
+
   private currentState() {
     const { markwhenState, error } = buildState(this.props.text);
+    (window as any).__markwhenDebug.lastState = markwhenState;
     if (error !== this.state.error) {
       setTimeout(() => this.setState({ error }), 0);
     }

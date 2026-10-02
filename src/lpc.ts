@@ -12,7 +12,12 @@ import { DEBUG } from './config';
  *   { type, response: true, id: <要求と同じid>, params: <返す値> }
  * ホストからの更新通知は、同じ形式の request を送る(ビューの listeners[type] が呼ばれる想定)。
  *
- * 形式が違った場合はこのファイルだけを直せばよい。DEBUG=true でやり取りがコンソールに出る。
+ * ビュー側(view-client)の受信条件(実コードで確認済み):
+ *   - メッセージの id が 'markwhen' で始まらないものは無視される
+ *   - 自分自身のウィンドウ(event.source === window)からのものも無視される
+ *   - response は pending の postRequest を resolve する(返信全体が渡され、値は params)
+ *   - request は listeners[type](params) を呼び、結果を {type, response:true, id, params} で返す
+ * DEBUG=true でやり取りがコンソールに出る。
  */
 export class LpcHost {
   private seq = 0;
